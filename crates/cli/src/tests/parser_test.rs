@@ -722,6 +722,51 @@ fn test_parsing_after_failed_external_scan_that_depends_on_column() {
 }
 
 #[test]
+fn test_parsing_after_editing_text_around_a_repetition_that_contains_an_error() {
+    let mut parser = Parser::new();
+    parser.set_language(&get_language("json")).unwrap();
+
+    // The first object is never closed, so everything from the second `{` on ends up inside an
+    // `ERROR`, where `}, {` is skipped as an error in the middle of a repetition of pairs.
+    let mut code = concat!(
+        "  {\n",
+        "    \"nested\": {\"open\": true, \"count\": 2346}\n",
+        "  {\n",
+        "    \"name\": \"record-19\",\n",
+        "    \"tags\": [\"a\", \"b\"],\n",
+        "  },\n",
+        "  {\n",
+        "    \"id\": 284,\n",
+        "    \"name\": \"record-284\",\n",
+        "]\n",
+    )
+    .as_bytes()
+    .to_vec();
+    let mut tree = parser.parse(&code, None).unwrap();
+
+    // After this edit, the `}` closes a real object, so the old repetition, whose error depended
+    // on what preceded it, must not be reused.
+    perform_edit(
+        &mut tree,
+        &mut code,
+        &Edit {
+            position: 5,
+            deleted_length: 0,
+            inserted_text: b" \"name\": \"record-129\",\n    \"tags\": [\"a\", \"b\"".to_vec(),
+        },
+    )
+    .unwrap();
+
+    let incremental = parser.parse(&code, Some(&tree)).unwrap();
+    let fresh = parser.parse(&code, None).unwrap();
+    assert!(fresh.root_node().has_error());
+    assert_eq!(
+        incremental.root_node().to_sexp(),
+        fresh.root_node().to_sexp()
+    );
+}
+
+#[test]
 fn test_parsing_after_detecting_error_in_the_middle_of_a_string_token() {
     let mut parser = Parser::new();
     parser.set_language(&get_language("python")).unwrap();
