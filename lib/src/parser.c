@@ -173,6 +173,17 @@ static void ts_parser__log(TSParser *self) {
   }
 }
 
+static StackVersion ts_parser__reduce(
+  TSParser *self,
+  StackVersion version,
+  TSSymbol symbol,
+  uint32_t count,
+  int dynamic_precedence,
+  uint16_t production_id,
+  bool is_fragile,
+  bool end_of_non_terminal_extra
+);
+
 static bool ts_parser__breakdown_top_of_stack(
   TSParser *self,
   StackVersion version
@@ -203,6 +214,34 @@ static bool ts_parser__breakdown_top_of_stack(
 
         ts_subtree_retain(child);
         ts_stack_push(self->stack, slice.version, child, pending, state);
+
+        // A repetition node is split into repetitions. Before the next one's first token, the
+        // parser would have reduced each with the repetition below it, so do the same: error
+        // recovery must see the stack that a parse without reuse would have.
+        if (pop.size == 1 && j + 1 < n && ts_subtree_symbol(child) == ts_subtree_symbol(parent)) {
+          Subtree next = ts_subtree_children(parent)[j + 1];
+          TableEntry entry;
+          ts_language_table_entry(self->language, state, ts_subtree_leaf_symbol(next), &entry);
+          for (uint32_t k = 0; k < entry.action_count; k++) {
+            TSParseAction action = entry.actions[k];
+            if (
+              action.type == TSParseActionTypeReduce &&
+              action.reduce.symbol == ts_subtree_symbol(parent) &&
+              action.reduce.child_count == 2
+            ) {
+              LOG("breakdown_reduce sym:%s", SYM_NAME(action.reduce.symbol));
+              StackVersion reduced = ts_parser__reduce(
+                self, slice.version, action.reduce.symbol, 2,
+                action.reduce.dynamic_precedence, action.reduce.production_id, false, false
+              );
+              if (reduced != STACK_VERSION_NONE) {
+                ts_stack_renumber_version(self->stack, reduced, slice.version);
+              }
+              state = ts_stack_state(self->stack, slice.version);
+              break;
+            }
+          }
+        }
       }
 
       for (uint32_t j = 1; j < slice.subtrees.size; j++) {

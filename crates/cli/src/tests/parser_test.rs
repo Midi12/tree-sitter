@@ -767,6 +767,36 @@ fn test_parsing_after_editing_text_around_a_repetition_that_contains_an_error() 
 }
 
 #[test]
+fn test_parsing_after_breaking_down_a_reused_repetition_before_an_error() {
+    let mut parser = Parser::new();
+    parser.set_language(&get_language("rust")).unwrap();
+
+    let mut code = b"mod s{fn s(){}fn n(){};\nfn r()}".to_vec();
+    let mut tree = parser.parse(&code, None).unwrap();
+
+    // The items before the edit are reused as one repetition node, which the error right after
+    // it breaks down again.
+    perform_edit(
+        &mut tree,
+        &mut code,
+        &Edit {
+            position: 24,
+            deleted_length: 0,
+            inserted_text: b"|\"".to_vec(),
+        },
+    )
+    .unwrap();
+
+    let incremental = parser.parse(&code, Some(&tree)).unwrap();
+    let fresh = parser.parse(&code, None).unwrap();
+    assert!(fresh.root_node().has_error());
+    assert_eq!(
+        incremental.root_node().to_sexp(),
+        fresh.root_node().to_sexp()
+    );
+}
+
+#[test]
 fn test_parsing_after_detecting_error_in_the_middle_of_a_string_token() {
     let mut parser = Parser::new();
     parser.set_language(&get_language("python")).unwrap();
